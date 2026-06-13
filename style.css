@@ -1,0 +1,219 @@
+:root {
+  color-scheme: dark;
+  --bg: #151515;
+  --panel: #202328;
+  --panel-2: #2b2f36;
+  --wall: #3e4a4f;
+  --floor: #d8cfae;
+  --line: #111418;
+  --text: #f4f1e7;
+  --muted: #aeb5b1;
+  --accent: #db3f47;
+  --gold: #e4b53d;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  overscroll-behavior: none;
+}
+
+body {
+  background:
+    linear-gradient(135deg, rgba(219, 63, 71, 0.14), transparent 34%),
+    linear-gradient(315deg, rgba(68, 132, 96, 0.22), transparent 40%),
+    var(--bg);
+  color: var(--text);
+  font-family: "Microsoft JhengHei", "PingFang TC", system-ui, sans-serif;
+}
+
+button {
+  font: inherit;
+}
+
+.shell {
+  height: 100vh;
+  height: 100svh;
+  padding: clamp(12px, 3vw, 28px);
+  display: grid;
+  place-items: center;
+  overflow: hidden;
+}
+
+.game-panel {
+  width: min(1120px, 100%);
+  height: 100%;
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  gap: 12px;
+  min-height: 0;
+}
+
+.hud {
+  min-height: 64px;
+  display: grid;
+  grid-template-columns: minmax(120px, 1fr) repeat(5, minmax(68px, 96px)) 48px;
+  gap: 8px;
+  align-items: stretch;
+}
+
+.hud > div,
+.icon-btn,
+.touch-btn,
+#startBtn {
+  border: 1px solid rgba(244, 241, 231, 0.16);
+  background: rgba(32, 35, 40, 0.88);
+  color: var(--text);
+  box-shadow: 0 14px 42px rgba(0, 0, 0, 0.22);
+}
+
+.hud > div {
+  border-radius: 8px;
+  padding: 10px 12px;
+  display: grid;
+  align-content: center;
+  gap: 3px;
+  min-width: 0;
+}
+
+.label {
+  color: var(--muted);
+  font-size: 12px;
+  line-height: 1;
+}
+
+.hud strong {
+  font-size: 18px;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.icon-btn {
+  width: 48px;
+  min-height: 48px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-size: 26px;
+  line-height: 1;
+}
+
+.canvas-wrap {
+  position: relative;
+  width: 100%;
+  height: 100%;
+  min-height: 0;
+  border: 1px solid rgba(244, 241, 231, 0.16);
+  border-radius: 8px;
+  overflow: hidden;
+  background: #111418;
+  box-shadow: 0 24px 64px rgba(0, 0, 0, 0.34);
+}
+
+canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: auto;
+  touch-action: none;
+}
+
+.overlay {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-items: center;
+  align-content: center;
+  gap: 18px;
+  background: rgba(17, 20, 24, 0.58);
+  backdrop-filter: blur(2px);
+}
+
+.overlay.hidden {
+  display: none;
+}
+
+.overlay h1 {
+  margin: 0;
+  font-size: clamp(34px, 8vw, 72px);
+  line-height: 1;
+  letter-spacing: 0;
+  text-shadow: 0 4px 22px rgba(0, 0, 0, 0.58);
+}
+
+#startBtn {
+  min-width: 128px;
+  min-height: 48px;
+  border-radius: 8px;
+  cursor: pointer;
+  font-weight: 700;
+}
+
+.touch-pad {
+  display: none;
+  grid-template-columns: repeat(3, 56px);
+  grid-template-rows: repeat(2, 52px);
+  justify-content: center;
+  gap: 8px;
+  touch-action: none;
+}
+
+.touch-btn {
+  border-radius: 8px;
+  min-width: 56px;
+  min-height: 52px;
+  cursor: pointer;
+  touch-action: none;
+  user-select: none;
+}
+
+.touch-btn[data-dir="up"] {
+  grid-column: 2;
+}
+
+.touch-btn[data-dir="left"] {
+  grid-column: 1;
+  grid-row: 2;
+}
+
+.touch-btn[data-dir="down"] {
+  grid-column: 2;
+  grid-row: 2;
+}
+
+.touch-btn[data-dir="right"] {
+  grid-column: 3;
+  grid-row: 2;
+}
+
+@media (max-width: 720px) {
+  .shell {
+    align-items: start;
+    padding: 10px;
+  }
+
+  .hud {
+    grid-template-columns: repeat(3, minmax(0, 1fr)) 48px;
+    min-height: 56px;
+  }
+
+  .hud > div:first-child {
+    grid-column: 1 / -1;
+  }
+
+  .canvas-wrap {
+    min-height: 0;
+  }
+
+  .touch-pad {
+    display: grid;
+  }
+}

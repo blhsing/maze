@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="zh-Hant">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>迷宮逃生</title>
+    <link rel="stylesheet" href="style.css">
+  </head>
+  <body>
+    <main class="shell">
+      <section class="game-panel" aria-label="迷宮逃生遊戲">
+        <div class="hud">
+          <div>
+            <span class="label">狀態</span>
+            <strong id="statusText">準備</strong>
+          </div>
+          <div>
+            <span class="label">菠菜</span>
+            <strong id="spinachTimer">0.0</strong>
+          </div>
+          <div>
+            <span class="label">紅蘿蔔</span>
+            <strong id="carrotTimer">0.0</strong>
+          </div>
+          <div>
+            <span class="label">大便</span>
+            <strong id="poopTimer">0.0</strong>
+          </div>
+          <div>
+            <span class="label">酒杯</span>
+            <strong id="wineTimer">0.0</strong>
+          </div>
+          <div>
+            <span class="label">冰凍</span>
+            <strong id="iceTimer">0.0</strong>
+          </div>
+          <button id="restartBtn" class="icon-btn" type="button" title="重新開始" aria-label="重新開始">↻</button>
+        </div>
+
+        <div class="canvas-wrap">
+          <canvas id="game" width="960" height="640" aria-label="迷宮"></canvas>
+          <div id="overlay" class="overlay">
+            <h1>迷宮逃生</h1>
+            <button id="startBtn" type="button">開始</button>
+          </div>
+        </div>
+
+        <div class="touch-pad" aria-label="方向控制">
+          <button class="touch-btn" data-dir="up" type="button" aria-label="上">▲</button>
+          <button class="touch-btn" data-dir="left" type="button" aria-label="左">◀</button>
+          <button class="touch-btn" data-dir="down" type="button" aria-label="下">▼</button>
+          <button class="touch-btn" data-dir="right" type="button" aria-label="右">▶</button>
+        </div>
+      </section>
+    </main>
+    <script src="game.js"></script>
+  </body>
+</html>
