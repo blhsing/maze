@@ -14,21 +14,20 @@
             <span class="label">狀態</span>
             <strong id="statusText">準備</strong>
           </div>
-          <div>
-            <span class="label">菠菜</span>
-            <strong id="spinachTimer">0.0</strong>
+          <div class="player-card">
+            <span class="label" id="player1Label">P1 WASD</span>
+            <strong id="player1State">準備</strong>
+            <small id="player1Effects">無效果</small>
           </div>
-          <div>
-            <span class="label">紅蘿蔔</span>
-            <strong id="carrotTimer">0.0</strong>
+          <div class="player-card">
+            <span class="label" id="player2Label">P2 方向鍵</span>
+            <strong id="player2State">準備</strong>
+            <small id="player2Effects">無效果</small>
           </div>
-          <div>
-            <span class="label">大便</span>
-            <strong id="poopTimer">0.0</strong>
-          </div>
-          <div>
-            <span class="label">酒杯</span>
-            <strong id="wineTimer">0.0</strong>
+          <div class="player-card">
+            <span class="label" id="player3Label">P3 IJKL</span>
+            <strong id="player3State">準備</strong>
+            <small id="player3Effects">無效果</small>
           </div>
           <div>
             <span class="label">冰凍</span>
@@ -41,6 +40,45 @@
           <canvas id="game" width="960" height="640" aria-label="迷宮"></canvas>
           <div id="overlay" class="overlay">
             <h1>迷宮逃生</h1>
+            <div class="setup-controls" aria-label="玩家設定">
+              <label>
+                <span>總玩家數</span>
+                <select id="playerCountSelect">
+                  <option value="1">1 位</option>
+                  <option value="2">2 位</option>
+                  <option value="3" selected>3 位</option>
+                </select>
+              </label>
+              <label>
+                <span>P1</span>
+                <select id="player1ModeSelect">
+                  <option value="human">人類</option>
+                  <option value="ai">AI</option>
+                </select>
+              </label>
+              <label>
+                <span>P2</span>
+                <select id="player2ModeSelect">
+                  <option value="human">人類</option>
+                  <option value="ai">AI</option>
+                </select>
+              </label>
+              <label>
+                <span>P3</span>
+                <select id="player3ModeSelect">
+                  <option value="human">人類</option>
+                  <option value="ai">AI</option>
+                </select>
+              </label>
+              <label>
+                <span>AI 難度</span>
+                <select id="aiDifficultySelect">
+                  <option value="easy">簡單</option>
+                  <option value="normal" selected>普通</option>
+                  <option value="hard">困難</option>
+                </select>
+              </label>
+            </div>
             <button id="startBtn" type="button">開始</button>
           </div>
         </div>

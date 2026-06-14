@@ -1,14 +1,38 @@
 const canvas = document.querySelector("#game");
 const ctx = canvas.getContext("2d");
 const statusText = document.querySelector("#statusText");
-const spinachTimer = document.querySelector("#spinachTimer");
-const carrotTimer = document.querySelector("#carrotTimer");
-const poopTimer = document.querySelector("#poopTimer");
-const wineTimer = document.querySelector("#wineTimer");
+const playerHud = [
+  {
+    label: document.querySelector("#player1Label"),
+    state: document.querySelector("#player1State"),
+    effects: document.querySelector("#player1Effects"),
+  },
+  {
+    label: document.querySelector("#player2Label"),
+    state: document.querySelector("#player2State"),
+    effects: document.querySelector("#player2Effects"),
+  },
+  {
+    label: document.querySelector("#player3Label"),
+    state: document.querySelector("#player3State"),
+    effects: document.querySelector("#player3Effects"),
+  },
+];
+for (const hud of playerHud) {
+  hud.card = hud.label.closest(".player-card");
+}
 const iceTimer = document.querySelector("#iceTimer");
 const overlay = document.querySelector("#overlay");
+const overlayTitle = overlay.querySelector("h1");
 const startBtn = document.querySelector("#startBtn");
 const restartBtn = document.querySelector("#restartBtn");
+const playerCountSelect = document.querySelector("#playerCountSelect");
+const playerModeSelects = [
+  document.querySelector("#player1ModeSelect"),
+  document.querySelector("#player2ModeSelect"),
+  document.querySelector("#player3ModeSelect"),
+];
+const aiDifficultySelect = document.querySelector("#aiDifficultySelect");
 
 const LOGICAL_COLS = 15;
 const LOGICAL_ROWS = 10;
@@ -22,6 +46,67 @@ const ITEM_DRAW_SCALE = 0.86;
 const ITEM_PICKUP_RADIUS = 0.82;
 const DRUNK_SECONDS = 6;
 const FREEZE_SECONDS = 5;
+const REVIVE_RADIUS = 0.86;
+const REVIVE_SPINACH_SECONDS = 2;
+const SETTINGS_KEY = "mazeEscapeSettings";
+const AI_DIFFICULTIES = {
+  easy: {
+    speed: 0.82,
+    thinkInterval: 0.58,
+    dangerRadius: 2.2,
+    dangerWeight: 1.25,
+    itemRadius: 2.4,
+    rescueRadius: 3.2,
+    lookAhead: 2,
+    noise: 0.22,
+  },
+  normal: {
+    speed: 0.98,
+    thinkInterval: 0.32,
+    dangerRadius: 3.1,
+    dangerWeight: 1.7,
+    itemRadius: 4.2,
+    rescueRadius: 5.5,
+    lookAhead: 3,
+    noise: 0.08,
+  },
+  hard: {
+    speed: 1.13,
+    thinkInterval: 0.16,
+    dangerRadius: 4.2,
+    dangerWeight: 2.25,
+    itemRadius: 6.2,
+    rescueRadius: 9,
+    lookAhead: 4,
+    noise: 0,
+  },
+};
+const PLAYER_SPECS = [
+  {
+    id: 1,
+    label: "P1",
+    controlText: "WASD",
+    color: "#f2c24b",
+    start: { x: 1.55, y: 1.55 },
+    controls: { up: ["w", "W"], down: ["s", "S"], left: ["a", "A"], right: ["d", "D"] },
+  },
+  {
+    id: 2,
+    label: "P2",
+    controlText: "方向鍵",
+    color: "#60a5fa",
+    start: { x: 2.3, y: 1.55 },
+    controls: { up: ["ArrowUp"], down: ["ArrowDown"], left: ["ArrowLeft"], right: ["ArrowRight"] },
+  },
+  {
+    id: 3,
+    label: "P3",
+    controlText: "IJKL",
+    color: "#f472b6",
+    start: { x: 1.55, y: 2.3 },
+    controls: { up: ["i", "I"], down: ["k", "K"], left: ["j", "J"], right: ["l", "L"] },
+  },
+];
 const keys = new Set();
 const touchDirs = new Set();
 
@@ -29,7 +114,7 @@ let maze;
 let cellSize;
 let offsetX;
 let offsetY;
-let player;
+let players;
 let exitCell;
 let holes;
 let items;
@@ -120,18 +205,12 @@ function shuffle(list) {
 }
 
 function resetGame(runNow = false) {
+  if (runNow) saveSettings();
+  syncSetupVisibility();
   maze = makeMaze();
   exitCell = farthestCell({ x: 1, y: 1 });
   maze[exitCell.y][exitCell.x] = FLOOR;
-  player = {
-    x: 1.7,
-    y: 1.7,
-    radius: PLAYER_RADIUS,
-    spinach: 0,
-    carrot: 0,
-    poop: 0,
-    drunk: 0,
-  };
+  players = PLAYER_SPECS.slice(0, currentPlayerCount()).map((spec, index) => makePlayer(spec, index));
   const cells = openCells();
   holes = makeHoles(cells.slice(0, 7));
   items = makeItems(cells.slice(7, 32));
@@ -141,6 +220,96 @@ function resetGame(runNow = false) {
   statusText.textContent = runNow ? "逃跑中" : "準備";
   updateHud();
   draw();
+}
+
+function makePlayer(spec, index) {
+  return {
+    id: spec.id,
+    label: spec.label,
+    controlText: spec.controlText,
+    color: spec.color,
+    controls: spec.controls,
+    isAi: playerModeSelects[index]?.value === "ai",
+    x: spec.start.x,
+    y: spec.start.y,
+    radius: PLAYER_RADIUS,
+    spinach: 0,
+    carrot: 0,
+    poop: 0,
+    drunk: 0,
+    state: "active",
+    aiThink: 0,
+    aiPath: [],
+    aiTarget: null,
+  };
+}
+
+function currentPlayerCount() {
+  const value = Number(playerCountSelect?.value || 3);
+  return Math.max(1, Math.min(3, value));
+}
+
+function loadSettings() {
+  try {
+    const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
+    if (saved.playerCount) playerCountSelect.value = String(Math.max(1, Math.min(3, Number(saved.playerCount))));
+    if (Array.isArray(saved.playerModes)) {
+      saved.playerModes.forEach((mode, index) => {
+        if (playerModeSelects[index] && ["human", "ai"].includes(mode)) {
+          playerModeSelects[index].value = mode;
+        }
+      });
+    }
+    if (saved.aiDifficulty && AI_DIFFICULTIES[saved.aiDifficulty]) {
+      aiDifficultySelect.value = saved.aiDifficulty;
+    }
+  } catch {
+    localStorage.removeItem(SETTINGS_KEY);
+  }
+  syncSetupVisibility();
+}
+
+function saveSettings() {
+  const settings = {
+    playerCount: currentPlayerCount(),
+    playerModes: playerModeSelects.map((select) => select.value),
+    aiDifficulty: aiDifficultySelect.value,
+  };
+  try {
+    localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+  } catch {
+    // Some browser privacy modes disable localStorage for file pages.
+  }
+}
+
+function syncSetupVisibility() {
+  const count = currentPlayerCount();
+  const title = `${count}人迷宮逃生`;
+  overlayTitle.textContent = title;
+  document.title = title;
+  playerModeSelects.forEach((select, index) => {
+    const enabled = index < count;
+    select.closest("label").hidden = !enabled;
+    playerHud[index].card.hidden = !enabled;
+  });
+  playerHud.forEach((hud, index) => {
+    const spec = PLAYER_SPECS[index];
+    const mode = playerModeSelects[index].value === "ai" ? `AI ${aiDifficultyText()}` : spec.controlText;
+    hud.label.textContent = `${spec.label} ${mode}`;
+    if (index >= count) {
+      hud.state.textContent = "-";
+      hud.effects.textContent = "未加入";
+    }
+  });
+}
+
+function aiDifficultyText() {
+  const labels = {
+    easy: "簡單",
+    normal: "普通",
+    hard: "困難",
+  };
+  return labels[aiDifficultySelect.value] || labels.normal;
 }
 
 function farthestCell(start) {
@@ -247,47 +416,209 @@ function gameLoop(now) {
 }
 
 function update(dt) {
-  player.spinach = Math.max(0, player.spinach - dt);
-  player.carrot = Math.max(0, player.carrot - dt);
-  player.poop = Math.max(0, player.poop - dt);
-  player.drunk = Math.max(0, player.drunk - dt);
-
-  movePlayer(dt);
-  collectItems();
+  for (const player of activePlayers()) {
+    player.spinach = Math.max(0, player.spinach - dt);
+    player.carrot = Math.max(0, player.carrot - dt);
+    player.poop = Math.max(0, player.poop - dt);
+    player.drunk = Math.max(0, player.drunk - dt);
+    movePlayer(player, dt);
+    collectItems(player);
+  }
+  reviveDeadPlayers();
   moveHoles(dt);
   checkEndings();
   updateHud();
 }
 
-function movePlayer(dt) {
-  const intent = inputVector();
+function activePlayers() {
+  return players.filter((player) => player.state === "active");
+}
+
+function deadPlayers() {
+  return players.filter((player) => player.state === "dead");
+}
+
+function movePlayer(player, dt) {
+  const intent = player.isAi ? aiInputVector(player, dt) : inputVector(player);
+  if (player.drunk > 0) {
+    intent.x *= -1;
+    intent.y *= -1;
+  }
   const len = Math.hypot(intent.x, intent.y) || 1;
   const boost = player.carrot > 0 ? 1.55 : 1;
   const drag = player.poop > 0 ? 0.55 : 1;
-  const speed = 4.25 * boost * drag;
+  const aiSpeed = player.isAi ? currentAiConfig().speed : 1;
+  const speed = 4.25 * boost * drag * aiSpeed;
   const vx = (intent.x / len) * speed * dt;
   const vy = (intent.y / len) * speed * dt;
-  if (intent.x !== 0) player.x = slide(player.x, player.y, vx, 0).x;
-  if (intent.y !== 0) player.y = slide(player.x, player.y, 0, vy).y;
+  if (intent.x !== 0) player.x = slide(player, player.x, player.y, vx, 0).x;
+  if (intent.y !== 0) player.y = slide(player, player.x, player.y, 0, vy).y;
 }
 
-function inputVector() {
-  const left = keys.has("ArrowLeft") || keys.has("a") || keys.has("A") || touchDirs.has("left");
-  const right = keys.has("ArrowRight") || keys.has("d") || keys.has("D") || touchDirs.has("right");
-  const up = keys.has("ArrowUp") || keys.has("w") || keys.has("W") || touchDirs.has("up");
-  const down = keys.has("ArrowDown") || keys.has("s") || keys.has("S") || touchDirs.has("down");
+function inputVector(player) {
+  const left = hasPressed(player.controls.left) || (player.id === 1 && touchDirs.has("left"));
+  const right = hasPressed(player.controls.right) || (player.id === 1 && touchDirs.has("right"));
+  const up = hasPressed(player.controls.up) || (player.id === 1 && touchDirs.has("up"));
+  const down = hasPressed(player.controls.down) || (player.id === 1 && touchDirs.has("down"));
   const vector = {
     x: Number(right) - Number(left),
     y: Number(down) - Number(up),
   };
-  if (player.drunk > 0) {
-    vector.x *= -1;
-    vector.y *= -1;
+  return vector;
+}
+
+function hasPressed(keyList) {
+  return keyList.some((key) => keys.has(key));
+}
+
+function currentAiConfig() {
+  return AI_DIFFICULTIES[aiDifficultySelect?.value] || AI_DIFFICULTIES.normal;
+}
+
+function aiInputVector(player, dt) {
+  const config = currentAiConfig();
+  const currentCell = entityCell(player);
+  player.aiThink -= dt;
+
+  if (player.aiThink <= 0 || !player.aiTarget || reachedTargetCell(player, player.aiTarget)) {
+    player.aiTarget = chooseAiTarget(player, config);
+    player.aiPath = pathTo(currentCell, player.aiTarget);
+    player.aiThink = config.thinkInterval * (0.8 + Math.random() * 0.4);
+  }
+
+  while (
+    player.aiPath.length > 1 &&
+    player.aiPath[1].x === currentCell.x &&
+    player.aiPath[1].y === currentCell.y
+  ) {
+    player.aiPath.shift();
+  }
+
+  if (
+    player.aiPath.length &&
+    (player.aiPath[0].x !== currentCell.x || player.aiPath[0].y !== currentCell.y)
+  ) {
+    player.aiPath = pathTo(currentCell, player.aiTarget);
+  }
+
+  const next = player.aiPath[1] || player.aiTarget || currentCell;
+  const vector = {
+    x: next.x + 0.5 - player.x,
+    y: next.y + 0.5 - player.y,
+  };
+  const repel = holeRepelVector(player, config);
+  vector.x += repel.x;
+  vector.y += repel.y;
+
+  if (config.noise > 0) {
+    vector.x += (Math.random() - 0.5) * config.noise;
+    vector.y += (Math.random() - 0.5) * config.noise;
+  }
+
+  return vector;
+}
+
+function chooseAiTarget(player, config) {
+  if (player.spinach <= 0 && nearestHoleDistance(player.x, player.y) < config.dangerRadius) {
+    return bestEscapeCell(player, config);
+  }
+
+  const fallen = nearestDeadPlayer(player, config.rescueRadius);
+  if (fallen) return entityCell(fallen);
+
+  const item = nearestUsefulItem(player, config.itemRadius);
+  if (item) return entityCell(item);
+
+  return { x: exitCell.x, y: exitCell.y };
+}
+
+function nearestDeadPlayer(player, radius) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const fallen of deadPlayers()) {
+    const currentDistance = Math.hypot(player.x - fallen.x, player.y - fallen.y);
+    if (currentDistance <= radius && currentDistance < nearestDistance) {
+      nearest = fallen;
+      nearestDistance = currentDistance;
+    }
+  }
+  return nearest;
+}
+
+function nearestUsefulItem(player, radius) {
+  const usefulTypes = new Set(["spinach", "carrot", "ice"]);
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const item of items) {
+    if (item.taken || !usefulTypes.has(item.type)) continue;
+    const currentDistance = Math.hypot(player.x - item.x, player.y - item.y);
+    if (currentDistance <= radius && currentDistance < nearestDistance) {
+      nearest = item;
+      nearestDistance = currentDistance;
+    }
+  }
+  return nearest;
+}
+
+function bestEscapeCell(player, config) {
+  const origin = entityCell(player);
+  let best = origin;
+  let bestScore = -Infinity;
+
+  for (let y = origin.y - config.lookAhead; y <= origin.y + config.lookAhead; y++) {
+    for (let x = origin.x - config.lookAhead; x <= origin.x + config.lookAhead; x++) {
+      if (x < 0 || x >= COLS || y < 0 || y >= ROWS || maze[y][x] !== FLOOR) continue;
+      const path = pathTo(origin, { x, y });
+      const holeDistance = nearestHoleDistance(x + 0.5, y + 0.5);
+      const exitDistance = distance({ x, y }, exitCell);
+      const score = holeDistance * 2.2 - path.length * 0.22 - exitDistance * 0.025;
+      if (score > bestScore) {
+        best = { x, y };
+        bestScore = score;
+      }
+    }
+  }
+
+  return best;
+}
+
+function holeRepelVector(player, config) {
+  if (player.spinach > 0) return { x: 0, y: 0 };
+
+  const vector = { x: 0, y: 0 };
+  for (const hole of holes) {
+    const dx = player.x - hole.x;
+    const dy = player.y - hole.y;
+    const d = Math.hypot(dx, dy) || 0.01;
+    if (d > config.dangerRadius) continue;
+    const freezeScale = hole.frozen > 0 ? 0.55 : 1;
+    const strength = ((config.dangerRadius - d) / config.dangerRadius) * config.dangerWeight * freezeScale;
+    vector.x += (dx / d) * strength;
+    vector.y += (dy / d) * strength;
   }
   return vector;
 }
 
-function slide(x, y, dx, dy) {
+function nearestHoleDistance(x, y) {
+  let best = Infinity;
+  for (const hole of holes) {
+    best = Math.min(best, Math.hypot(x - hole.x, y - hole.y));
+  }
+  return best;
+}
+
+function reachedTargetCell(player, target) {
+  return target && Math.hypot(player.x - (target.x + 0.5), player.y - (target.y + 0.5)) < 0.3;
+}
+
+function entityCell(entity) {
+  return {
+    x: Math.floor(entity.x),
+    y: Math.floor(entity.y),
+  };
+}
+
+function slide(player, x, y, dx, dy) {
   const radius = player.radius;
   const nx = x + dx;
   const ny = y + dy;
@@ -307,7 +638,7 @@ function isFloor(x, y) {
   return cx >= 0 && cx < COLS && cy >= 0 && cy < ROWS && maze[cy][cx] === FLOOR;
 }
 
-function collectItems() {
+function collectItems(player) {
   for (const item of items) {
     if (item.taken || Math.hypot(player.x - item.x, player.y - item.y) > ITEM_PICKUP_RADIUS) continue;
     item.taken = true;
@@ -315,12 +646,26 @@ function collectItems() {
     if (item.type === "carrot") player.carrot = 6;
     if (item.type === "poop") player.poop = 5;
     if (item.type === "wine") player.drunk = DRUNK_SECONDS;
-    if (item.type === "ice") freezeNearestHole();
+    if (item.type === "ice") freezeNearestHole(player);
+  }
+}
+
+function reviveDeadPlayers() {
+  for (const rescuer of activePlayers()) {
+    for (const fallen of deadPlayers()) {
+      if (Math.hypot(rescuer.x - fallen.x, rescuer.y - fallen.y) > REVIVE_RADIUS) continue;
+      fallen.state = "active";
+      fallen.spinach = REVIVE_SPINACH_SECONDS;
+      fallen.carrot = 0;
+      fallen.poop = 0;
+      fallen.drunk = 0;
+      fallen.x = rescuer.x;
+      fallen.y = rescuer.y;
+    }
   }
 }
 
 function moveHoles(dt) {
-  const target = { x: Math.floor(player.x), y: Math.floor(player.y) };
   for (const hole of holes) {
     if (hole.frozen > 0) {
       hole.frozen = Math.max(0, hole.frozen - dt);
@@ -330,6 +675,9 @@ function moveHoles(dt) {
       hole.stunned -= dt;
       continue;
     }
+    const targetPlayer = nearestActivePlayer(hole);
+    if (!targetPlayer) continue;
+    const target = { x: Math.floor(targetPlayer.x), y: Math.floor(targetPlayer.y) };
     hole.recalc -= dt;
     if (hole.recalc <= 0) {
       hole.path = pathTo({ x: Math.floor(hole.x), y: Math.floor(hole.y) }, target);
@@ -349,7 +697,20 @@ function moveHoles(dt) {
   }
 }
 
-function freezeNearestHole() {
+function nearestActivePlayer(from) {
+  let nearest = null;
+  let nearestDistance = Infinity;
+  for (const player of activePlayers()) {
+    const currentDistance = Math.hypot(player.x - from.x, player.y - from.y);
+    if (currentDistance < nearestDistance) {
+      nearest = player;
+      nearestDistance = currentDistance;
+    }
+  }
+  return nearest;
+}
+
+function freezeNearestHole(player) {
   let nearest = null;
   let nearestDistance = Infinity;
   for (const hole of holes) {
@@ -393,53 +754,96 @@ function pathTo(start, target) {
 
 function checkEndings() {
   for (const hole of holes) {
-    const hit = Math.hypot(player.x - hole.x, player.y - hole.y) < hole.radius + player.radius * 0.95;
-    if (!hit) continue;
-    if (player.spinach > 0) {
-      const dx = hole.x - player.x || 0.01;
-      const dy = hole.y - player.y || 0.01;
-      const len = Math.hypot(dx, dy);
-      const pushedX = hole.x + (dx / len) * 0.9;
-      const pushedY = hole.y + (dy / len) * 0.9;
-      if (isFloor(pushedX, pushedY)) {
-        hole.x = pushedX;
-        hole.y = pushedY;
+    for (const player of activePlayers()) {
+      const hit = Math.hypot(player.x - hole.x, player.y - hole.y) < hole.radius + player.radius * 0.95;
+      if (!hit) continue;
+      if (player.spinach > 0) {
+        const dx = hole.x - player.x || 0.01;
+        const dy = hole.y - player.y || 0.01;
+        const len = Math.hypot(dx, dy);
+        const pushedX = hole.x + (dx / len) * 0.9;
+        const pushedY = hole.y + (dy / len) * 0.9;
+        if (isFloor(pushedX, pushedY)) {
+          hole.x = pushedX;
+          hole.y = pushedY;
+        }
+        hole.stunned = 1.15;
+        hole.recalc = 0;
+        hole.path = [];
+      } else {
+        player.state = "dead";
+        player.spinach = 0;
+        player.carrot = 0;
+        player.poop = 0;
+        player.drunk = 0;
       }
-      hole.stunned = 1.15;
-      hole.recalc = 0;
-      hole.path = [];
-    } else {
-      state = "dead";
-      statusText.textContent = "掉下去了";
-      overlay.querySelector("h1").textContent = "掉下去了";
-      startBtn.textContent = "再逃一次";
-      overlay.classList.remove("hidden");
     }
   }
 
-  if (Math.hypot(player.x - (exitCell.x + 0.5), player.y - (exitCell.y + 0.5)) < 0.48) {
+  for (const player of activePlayers()) {
+    if (Math.hypot(player.x - (exitCell.x + 0.5), player.y - (exitCell.y + 0.5)) < 0.62) {
+      player.state = "escaped";
+      player.x = exitCell.x + 0.5;
+      player.y = exitCell.y + 0.5;
+      player.spinach = 0;
+      player.carrot = 0;
+      player.poop = 0;
+      player.drunk = 0;
+    }
+  }
+
+  const activeCount = activePlayers().length;
+  const escapedCount = players.filter((player) => player.state === "escaped").length;
+  if (activeCount === 0 && escapedCount > 0) {
     state = "won";
-    statusText.textContent = "逃出去了";
-    overlay.querySelector("h1").textContent = "逃出去了";
+    statusText.textContent = escapedCount === players.length ? "全部逃出去了" : "倖存者逃出去了";
+    overlayTitle.textContent = escapedCount === players.length ? "全部逃出去了" : "倖存者逃出去了";
     startBtn.textContent = "再玩一次";
+    overlay.classList.remove("hidden");
+  } else if (activeCount === 0) {
+    state = "dead";
+    statusText.textContent = "全員掉下去了";
+    overlayTitle.textContent = "全員掉下去了";
+    startBtn.textContent = "再逃一次";
     overlay.classList.remove("hidden");
   }
 }
 
 function updateHud() {
-  spinachTimer.textContent = player.spinach.toFixed(1);
-  carrotTimer.textContent = player.carrot.toFixed(1);
-  poopTimer.textContent = player.poop.toFixed(1);
-  wineTimer.textContent = player.drunk.toFixed(1);
   iceTimer.textContent = Math.max(0, ...holes.map((hole) => hole.frozen)).toFixed(1);
+  players.forEach((player, index) => {
+    playerHud[index].state.textContent = playerStatus(player);
+    playerHud[index].effects.textContent = playerEffects(player);
+  });
   if (state === "playing") {
-    if (player.drunk > 0) statusText.textContent = "反向中";
-    else if (player.spinach > 0) statusText.textContent = "長大中";
-    else if (player.carrot > 0) statusText.textContent = "加速中";
-    else if (player.poop > 0) statusText.textContent = "變慢中";
-    else if (holes.some((hole) => hole.frozen > 0)) statusText.textContent = "冰凍中";
-    else statusText.textContent = "逃跑中";
+    const escapedCount = players.filter((player) => player.state === "escaped").length;
+    const deadCount = players.filter((player) => player.state === "dead").length;
+    statusText.textContent = `逃出 ${escapedCount} / 陣亡 ${deadCount}`;
   }
+}
+
+function playerStatus(player) {
+  if (state === "ready") return "準備";
+  if (player.state === "escaped") return "逃出";
+  if (player.state === "dead") return "陣亡";
+  if (player.drunk > 0) return "反向中";
+  if (player.spinach > 0) return "長大中";
+  if (player.carrot > 0) return "加速中";
+  if (player.poop > 0) return "變慢中";
+  return "逃跑中";
+}
+
+function playerEffects(player) {
+  if (state === "ready") return player.isAi ? `AI ${aiDifficultyText()}` : `人類 ${player.controlText}`;
+  if (player.state === "escaped") return "已到出口";
+  if (player.state === "dead") return "碰到即可復活";
+
+  const effects = [];
+  if (player.spinach > 0) effects.push(`菠菜 ${player.spinach.toFixed(1)}`);
+  if (player.carrot > 0) effects.push(`蘿蔔 ${player.carrot.toFixed(1)}`);
+  if (player.poop > 0) effects.push(`大便 ${player.poop.toFixed(1)}`);
+  if (player.drunk > 0) effects.push(`酒杯 ${player.drunk.toFixed(1)}`);
+  return effects.length ? effects.join(" / ") : "無效果";
 }
 
 function draw() {
@@ -452,7 +856,7 @@ function draw() {
   drawExit();
   for (const item of items) drawItem(item);
   for (const hole of holes) drawHole(hole);
-  drawPlayer();
+  for (const player of players) drawPlayer(player);
 }
 
 function drawMaze() {
@@ -519,25 +923,77 @@ function drawExit() {
   ctx.stroke();
 }
 
-function drawPlayer() {
+function drawPlayer(player) {
   const x = toPx(player.x);
   const y = toPy(player.y);
   const scale = player.spinach > 0 ? PLAYER_SPINACH_SCALE + Math.sin(pulse * 9) * 0.05 : 1;
   const r = cellSize * player.radius * scale;
-  ctx.fillStyle = player.spinach > 0 ? "#62c45f" : "#f2c24b";
+  ctx.globalAlpha = player.state === "dead" ? 0.48 : 1;
+  ctx.fillStyle = player.color;
   ctx.beginPath();
   ctx.arc(x, y, r, 0, Math.PI * 2);
   ctx.fill();
+
+  if (player.spinach > 0) {
+    ctx.strokeStyle = "#62c45f";
+    ctx.lineWidth = Math.max(3, r * 0.18);
+    ctx.beginPath();
+    ctx.arc(x, y, r + ctx.lineWidth * 0.6, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = "#1a1a1a";
   ctx.beginPath();
   ctx.arc(x - r * 0.32, y - r * 0.18, r * 0.12, 0, Math.PI * 2);
   ctx.arc(x + r * 0.32, y - r * 0.18, r * 0.12, 0, Math.PI * 2);
   ctx.fill();
-  ctx.strokeStyle = "#1a1a1a";
-  ctx.lineWidth = Math.max(2, r * 0.13);
-  ctx.beginPath();
-  ctx.arc(x, y + r * 0.04, r * 0.42, 0.12 * Math.PI, 0.88 * Math.PI);
-  ctx.stroke();
+
+  if (player.state === "dead") {
+    ctx.strokeStyle = "#111418";
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.36, y + r * 0.28);
+    ctx.lineTo(x + r * 0.36, y - r * 0.28);
+    ctx.moveTo(x + r * 0.36, y + r * 0.28);
+    ctx.lineTo(x - r * 0.36, y - r * 0.28);
+    ctx.stroke();
+  } else if (player.state === "escaped") {
+    ctx.strokeStyle = "#0d2f23";
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.36, y + r * 0.03);
+    ctx.lineTo(x - r * 0.1, y + r * 0.32);
+    ctx.lineTo(x + r * 0.42, y - r * 0.28);
+    ctx.stroke();
+  } else {
+    ctx.strokeStyle = "#1a1a1a";
+    ctx.lineWidth = Math.max(2, r * 0.13);
+    ctx.beginPath();
+    ctx.arc(x, y + r * 0.04, r * 0.42, 0.12 * Math.PI, 0.88 * Math.PI);
+    ctx.stroke();
+  }
+
+  ctx.globalAlpha = 1;
+  if (player.state === "dead") {
+    ctx.strokeStyle = "#f4f1e7";
+    ctx.lineWidth = Math.max(2, cellSize * 0.06);
+    ctx.beginPath();
+    ctx.arc(x, y, r * (1.55 + Math.sin(pulse * 7) * 0.08), 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.fillStyle = "#f4f1e7";
+    ctx.font = `700 ${Math.max(10, cellSize * 0.32)}px "Microsoft JhengHei", sans-serif`;
+    ctx.textAlign = "center";
+    ctx.textBaseline = "middle";
+    ctx.fillText("救", x, y + r * 1.45);
+  }
+  ctx.fillStyle = "#111418";
+  ctx.strokeStyle = "#f4f1e7";
+  ctx.lineWidth = Math.max(2, cellSize * 0.05);
+  ctx.font = `700 ${Math.max(10, cellSize * 0.34)}px "Microsoft JhengHei", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+  ctx.strokeText(player.label, x, y - r * 1.55);
+  ctx.fillText(player.label, x, y - r * 1.55);
 }
 
 function drawHole(hole) {
@@ -687,12 +1143,14 @@ function distance(a, b) {
 const controlKeys = new Set(["ArrowUp", "ArrowDown", "ArrowLeft", "ArrowRight", " "]);
 
 document.addEventListener("keydown", (event) => {
+  if (event.target?.tagName === "SELECT") return;
   if (controlKeys.has(event.key)) event.preventDefault();
   keys.add(event.key);
   if (event.key === " " && state !== "playing") resetGame(true);
 }, { capture: true });
 
 document.addEventListener("keyup", (event) => {
+  if (event.target?.tagName === "SELECT") return;
   if (controlKeys.has(event.key)) event.preventDefault();
   keys.delete(event.key);
 }, { capture: true });
@@ -713,8 +1171,16 @@ for (const button of document.querySelectorAll(".touch-btn")) {
   button.addEventListener("pointercancel", release);
 }
 
+for (const select of [playerCountSelect, aiDifficultySelect, ...playerModeSelects]) {
+  select.addEventListener("change", () => {
+    syncSetupVisibility();
+    saveSettings();
+    if (state === "ready") resetGame(false);
+  });
+}
+
 startBtn.addEventListener("click", () => {
-  overlay.querySelector("h1").textContent = "迷宮逃生";
+  overlayTitle.textContent = `${currentPlayerCount()}人迷宮逃生`;
   startBtn.textContent = "開始";
   resetGame(true);
 });
@@ -722,6 +1188,7 @@ startBtn.addEventListener("click", () => {
 restartBtn.addEventListener("click", () => resetGame(true));
 window.addEventListener("resize", resizeCanvas);
 
+loadSettings();
 resetGame(false);
 resizeCanvas();
 requestAnimationFrame(gameLoop);
