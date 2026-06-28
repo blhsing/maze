@@ -161,9 +161,9 @@ canvas {
 }
 
 .setup-controls {
-  width: min(760px, calc(100% - 28px));
+  width: min(520px, calc(100% - 28px));
   display: grid;
-  grid-template-columns: repeat(5, minmax(0, 1fr));
+  grid-template-columns: repeat(3, minmax(0, 1fr));
   gap: 8px;
 }
 
@@ -262,10 +262,6 @@ canvas {
   }
 
   .setup-controls {
-    grid-template-columns: repeat(2, minmax(0, 1fr));
-  }
-
-  .setup-controls label:first-child {
-    grid-column: 1 / -1;
+    grid-template-columns: 1fr;
   }
 }

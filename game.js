@@ -27,11 +27,7 @@ const overlayTitle = overlay.querySelector("h1");
 const startBtn = document.querySelector("#startBtn");
 const restartBtn = document.querySelector("#restartBtn");
 const playerCountSelect = document.querySelector("#playerCountSelect");
-const playerModeSelects = [
-  document.querySelector("#player1ModeSelect"),
-  document.querySelector("#player2ModeSelect"),
-  document.querySelector("#player3ModeSelect"),
-];
+const aiCountSelect = document.querySelector("#aiCountSelect");
 const aiDifficultySelect = document.querySelector("#aiDifficultySelect");
 
 const LOGICAL_COLS = 15;
@@ -46,38 +42,35 @@ const ITEM_DRAW_SCALE = 0.86;
 const ITEM_PICKUP_RADIUS = 0.82;
 const DRUNK_SECONDS = 6;
 const FREEZE_SECONDS = 5;
+const SWORD_SECONDS = 6;
+const CUT_COOLDOWN_SECONDS = 2.2;
 const REVIVE_RADIUS = 0.86;
 const REVIVE_SPINACH_SECONDS = 2;
+const SMALL_HOLE_RADIUS = 0.19;
 const SETTINGS_KEY = "mazeEscapeSettings";
 const AI_DIFFICULTIES = {
   easy: {
     speed: 0.82,
     thinkInterval: 0.58,
-    dangerRadius: 2.2,
-    dangerWeight: 1.25,
+    avoidRadius: 1.8,
+    avoidWeight: 4,
     itemRadius: 2.4,
-    rescueRadius: 3.2,
-    lookAhead: 2,
-    noise: 0.22,
+    noise: 0,
   },
   normal: {
     speed: 0.98,
     thinkInterval: 0.32,
-    dangerRadius: 3.1,
-    dangerWeight: 1.7,
+    avoidRadius: 2.5,
+    avoidWeight: 7,
     itemRadius: 4.2,
-    rescueRadius: 5.5,
-    lookAhead: 3,
-    noise: 0.08,
+    noise: 0,
   },
   hard: {
     speed: 1.13,
     thinkInterval: 0.16,
-    dangerRadius: 4.2,
-    dangerWeight: 2.25,
+    avoidRadius: 3.2,
+    avoidWeight: 10,
     itemRadius: 6.2,
-    rescueRadius: 9,
-    lookAhead: 4,
     noise: 0,
   },
 };
@@ -213,7 +206,7 @@ function resetGame(runNow = false) {
   players = PLAYER_SPECS.slice(0, currentPlayerCount()).map((spec, index) => makePlayer(spec, index));
   const cells = openCells();
   holes = makeHoles(cells.slice(0, 7));
-  items = makeItems(cells.slice(7, 32));
+  items = makeItems(cells.slice(7, 35));
   state = runNow ? "playing" : "ready";
   lastTime = performance.now();
   overlay.classList.toggle("hidden", runNow);
@@ -229,7 +222,7 @@ function makePlayer(spec, index) {
     controlText: spec.controlText,
     color: spec.color,
     controls: spec.controls,
-    isAi: playerModeSelects[index]?.value === "ai",
+    isAi: isAiSlot(index),
     x: spec.start.x,
     y: spec.start.y,
     radius: PLAYER_RADIUS,
@@ -237,10 +230,15 @@ function makePlayer(spec, index) {
     carrot: 0,
     poop: 0,
     drunk: 0,
+    sword: 0,
     state: "active",
     aiThink: 0,
     aiPath: [],
     aiTarget: null,
+    aiWaypoint: null,
+    aiStuck: 0,
+    aiLastX: spec.start.x,
+    aiLastY: spec.start.y,
   };
 }
 
@@ -249,22 +247,40 @@ function currentPlayerCount() {
   return Math.max(1, Math.min(3, value));
 }
 
+function currentAiCount() {
+  const count = currentPlayerCount();
+  const value = Number(aiCountSelect?.value || 0);
+  const clamped = Math.max(0, Math.min(count, value));
+  if (aiCountSelect && String(clamped) !== aiCountSelect.value) {
+    aiCountSelect.value = String(clamped);
+  }
+  return clamped;
+}
+
+function isAiSlot(index) {
+  const count = currentPlayerCount();
+  return index >= count - currentAiCount() && index < count;
+}
+
 function loadSettings() {
   try {
     const saved = JSON.parse(localStorage.getItem(SETTINGS_KEY) || "{}");
     if (saved.playerCount) playerCountSelect.value = String(Math.max(1, Math.min(3, Number(saved.playerCount))));
-    if (Array.isArray(saved.playerModes)) {
-      saved.playerModes.forEach((mode, index) => {
-        if (playerModeSelects[index] && ["human", "ai"].includes(mode)) {
-          playerModeSelects[index].value = mode;
-        }
-      });
+    if (saved.aiCount !== undefined) {
+      aiCountSelect.value = String(Math.max(0, Math.min(currentPlayerCount(), Number(saved.aiCount))));
+    } else if (Array.isArray(saved.playerModes)) {
+      const activeModes = saved.playerModes.slice(0, currentPlayerCount());
+      aiCountSelect.value = String(activeModes.filter((mode) => mode === "ai").length);
     }
     if (saved.aiDifficulty && AI_DIFFICULTIES[saved.aiDifficulty]) {
       aiDifficultySelect.value = saved.aiDifficulty;
     }
   } catch {
-    localStorage.removeItem(SETTINGS_KEY);
+    try {
+      localStorage.removeItem(SETTINGS_KEY);
+    } catch {
+      // Some browser privacy modes disable localStorage for file pages.
+    }
   }
   syncSetupVisibility();
 }
@@ -272,7 +288,7 @@ function loadSettings() {
 function saveSettings() {
   const settings = {
     playerCount: currentPlayerCount(),
-    playerModes: playerModeSelects.map((select) => select.value),
+    aiCount: currentAiCount(),
     aiDifficulty: aiDifficultySelect.value,
   };
   try {
@@ -284,17 +300,18 @@ function saveSettings() {
 
 function syncSetupVisibility() {
   const count = currentPlayerCount();
+  const aiCount = currentAiCount();
   const title = `${count}人迷宮逃生`;
   overlayTitle.textContent = title;
   document.title = title;
-  playerModeSelects.forEach((select, index) => {
-    const enabled = index < count;
-    select.closest("label").hidden = !enabled;
-    playerHud[index].card.hidden = !enabled;
-  });
+  for (const option of aiCountSelect.options) {
+    option.disabled = Number(option.value) > count;
+  }
   playerHud.forEach((hud, index) => {
+    const enabled = index < count;
+    playerHud[index].card.hidden = !enabled;
     const spec = PLAYER_SPECS[index];
-    const mode = playerModeSelects[index].value === "ai" ? `AI ${aiDifficultyText()}` : spec.controlText;
+    const mode = index >= count - aiCount && index < count ? `AI ${aiDifficultyText()}` : spec.controlText;
     hud.label.textContent = `${spec.label} ${mode}`;
     if (index >= count) {
       hud.state.textContent = "-";
@@ -369,11 +386,13 @@ function makeHoles(cells) {
     x: cell.x + 0.5,
     y: cell.y + 0.5,
     radius: 0.3,
+    size: "large",
     speed: 1.08 + index * 0.025,
     recalc: 0,
     path: [],
     stunned: 0,
     frozen: 0,
+    cutCooldown: 0,
   }));
 }
 
@@ -384,6 +403,7 @@ function makeItems(cells) {
     ...Array.from({ length: 6 }, () => "poop"),
     ...Array.from({ length: 4 }, () => "wine"),
     ...Array.from({ length: 4 }, () => "ice"),
+    ...Array.from({ length: 3 }, () => "sword"),
   ];
   return specs.slice(0, cells.length).map((type, index) => ({
     type,
@@ -421,6 +441,7 @@ function update(dt) {
     player.carrot = Math.max(0, player.carrot - dt);
     player.poop = Math.max(0, player.poop - dt);
     player.drunk = Math.max(0, player.drunk - dt);
+    player.sword = Math.max(0, player.sword - dt);
     movePlayer(player, dt);
     collectItems(player);
   }
@@ -478,37 +499,42 @@ function currentAiConfig() {
 function aiInputVector(player, dt) {
   const config = currentAiConfig();
   const currentCell = entityCell(player);
+  const moved = Math.hypot(player.x - player.aiLastX, player.y - player.aiLastY);
+  player.aiStuck = moved < 0.012 ? player.aiStuck + dt : 0;
+  player.aiLastX = player.x;
+  player.aiLastY = player.y;
   player.aiThink -= dt;
 
-  if (player.aiThink <= 0 || !player.aiTarget || reachedTargetCell(player, player.aiTarget)) {
+  if (deadPlayers().length > 0 && !isDeadPlayerTarget(player.aiTarget)) {
+    player.aiThink = 0;
+    player.aiWaypoint = null;
+  }
+
+  if (player.aiStuck > 0.45) {
+    player.aiTarget = { x: exitCell.x, y: exitCell.y };
+    player.aiWaypoint = currentCell;
+    player.aiPath = aiPathTo(currentCell, player.aiTarget, config);
+    player.aiThink = Math.min(player.aiThink, 0.08);
+    player.aiStuck = 0;
+  } else if (player.aiThink <= 0 || !player.aiTarget || reachedTargetCell(player, player.aiTarget)) {
     player.aiTarget = chooseAiTarget(player, config);
-    player.aiPath = pathTo(currentCell, player.aiTarget);
+    setAiPath(player, currentCell);
     player.aiThink = config.thinkInterval * (0.8 + Math.random() * 0.4);
   }
 
-  while (
-    player.aiPath.length > 1 &&
-    player.aiPath[1].x === currentCell.x &&
-    player.aiPath[1].y === currentCell.y
-  ) {
-    player.aiPath.shift();
+  if (!player.aiWaypoint || reachedWaypoint(player, player.aiWaypoint)) {
+    setAiPath(player, currentCell);
   }
 
-  if (
-    player.aiPath.length &&
-    (player.aiPath[0].x !== currentCell.x || player.aiPath[0].y !== currentCell.y)
-  ) {
-    player.aiPath = pathTo(currentCell, player.aiTarget);
-  }
-
-  const next = player.aiPath[1] || player.aiTarget || currentCell;
-  const vector = {
+  const next = player.aiWaypoint || currentCell;
+  const forward = {
     x: next.x + 0.5 - player.x,
     y: next.y + 0.5 - player.y,
   };
-  const repel = holeRepelVector(player, config);
-  vector.x += repel.x;
-  vector.y += repel.y;
+  const vector = {
+    x: forward.x,
+    y: forward.y,
+  };
 
   if (config.noise > 0) {
     vector.x += (Math.random() - 0.5) * config.noise;
@@ -518,12 +544,18 @@ function aiInputVector(player, dt) {
   return vector;
 }
 
-function chooseAiTarget(player, config) {
-  if (player.spinach <= 0 && nearestHoleDistance(player.x, player.y) < config.dangerRadius) {
-    return bestEscapeCell(player, config);
+function setAiPath(player, currentCell) {
+  const config = currentAiConfig();
+  player.aiPath = aiPathTo(currentCell, player.aiTarget || { x: exitCell.x, y: exitCell.y }, config);
+  if (player.aiPath.length <= 1 && player.aiTarget && !sameCell(currentCell, player.aiTarget)) {
+    player.aiTarget = { x: exitCell.x, y: exitCell.y };
+    player.aiPath = aiPathTo(currentCell, player.aiTarget, config);
   }
+  player.aiWaypoint = player.aiPath[1] || player.aiTarget || currentCell;
+}
 
-  const fallen = nearestDeadPlayer(player, config.rescueRadius);
+function chooseAiTarget(player, config) {
+  const fallen = nearestDeadPlayer(player);
   if (fallen) return entityCell(fallen);
 
   const item = nearestUsefulItem(player, config.itemRadius);
@@ -532,12 +564,12 @@ function chooseAiTarget(player, config) {
   return { x: exitCell.x, y: exitCell.y };
 }
 
-function nearestDeadPlayer(player, radius) {
+function nearestDeadPlayer(player) {
   let nearest = null;
   let nearestDistance = Infinity;
   for (const fallen of deadPlayers()) {
     const currentDistance = Math.hypot(player.x - fallen.x, player.y - fallen.y);
-    if (currentDistance <= radius && currentDistance < nearestDistance) {
+    if (currentDistance < nearestDistance) {
       nearest = fallen;
       nearestDistance = currentDistance;
     }
@@ -545,8 +577,12 @@ function nearestDeadPlayer(player, radius) {
   return nearest;
 }
 
+function isDeadPlayerTarget(target) {
+  return Boolean(target && deadPlayers().some((player) => sameCell(entityCell(player), target)));
+}
+
 function nearestUsefulItem(player, radius) {
-  const usefulTypes = new Set(["spinach", "carrot", "ice"]);
+  const usefulTypes = new Set(["spinach", "carrot", "ice", "sword"]);
   let nearest = null;
   let nearestDistance = Infinity;
   for (const item of items) {
@@ -560,55 +596,16 @@ function nearestUsefulItem(player, radius) {
   return nearest;
 }
 
-function bestEscapeCell(player, config) {
-  const origin = entityCell(player);
-  let best = origin;
-  let bestScore = -Infinity;
-
-  for (let y = origin.y - config.lookAhead; y <= origin.y + config.lookAhead; y++) {
-    for (let x = origin.x - config.lookAhead; x <= origin.x + config.lookAhead; x++) {
-      if (x < 0 || x >= COLS || y < 0 || y >= ROWS || maze[y][x] !== FLOOR) continue;
-      const path = pathTo(origin, { x, y });
-      const holeDistance = nearestHoleDistance(x + 0.5, y + 0.5);
-      const exitDistance = distance({ x, y }, exitCell);
-      const score = holeDistance * 2.2 - path.length * 0.22 - exitDistance * 0.025;
-      if (score > bestScore) {
-        best = { x, y };
-        bestScore = score;
-      }
-    }
-  }
-
-  return best;
-}
-
-function holeRepelVector(player, config) {
-  if (player.spinach > 0) return { x: 0, y: 0 };
-
-  const vector = { x: 0, y: 0 };
-  for (const hole of holes) {
-    const dx = player.x - hole.x;
-    const dy = player.y - hole.y;
-    const d = Math.hypot(dx, dy) || 0.01;
-    if (d > config.dangerRadius) continue;
-    const freezeScale = hole.frozen > 0 ? 0.55 : 1;
-    const strength = ((config.dangerRadius - d) / config.dangerRadius) * config.dangerWeight * freezeScale;
-    vector.x += (dx / d) * strength;
-    vector.y += (dy / d) * strength;
-  }
-  return vector;
-}
-
-function nearestHoleDistance(x, y) {
-  let best = Infinity;
-  for (const hole of holes) {
-    best = Math.min(best, Math.hypot(x - hole.x, y - hole.y));
-  }
-  return best;
-}
-
 function reachedTargetCell(player, target) {
   return target && Math.hypot(player.x - (target.x + 0.5), player.y - (target.y + 0.5)) < 0.3;
+}
+
+function reachedWaypoint(player, waypoint) {
+  return waypoint && Math.hypot(player.x - (waypoint.x + 0.5), player.y - (waypoint.y + 0.5)) < 0.18;
+}
+
+function sameCell(a, b) {
+  return a && b && a.x === b.x && a.y === b.y;
 }
 
 function entityCell(entity) {
@@ -647,6 +644,7 @@ function collectItems(player) {
     if (item.type === "poop") player.poop = 5;
     if (item.type === "wine") player.drunk = DRUNK_SECONDS;
     if (item.type === "ice") freezeNearestHole(player);
+    if (item.type === "sword") player.sword = SWORD_SECONDS;
   }
 }
 
@@ -659,6 +657,7 @@ function reviveDeadPlayers() {
       fallen.carrot = 0;
       fallen.poop = 0;
       fallen.drunk = 0;
+      fallen.sword = 0;
       fallen.x = rescuer.x;
       fallen.y = rescuer.y;
     }
@@ -667,6 +666,7 @@ function reviveDeadPlayers() {
 
 function moveHoles(dt) {
   for (const hole of holes) {
+    hole.cutCooldown = Math.max(0, (hole.cutCooldown || 0) - dt);
     if (hole.frozen > 0) {
       hole.frozen = Math.max(0, hole.frozen - dt);
       continue;
@@ -752,36 +752,152 @@ function pathTo(start, target) {
   return path.reverse();
 }
 
-function checkEndings() {
+function aiPathTo(start, target, config) {
+  if (!isFloor(start.x + 0.5, start.y + 0.5) || !isFloor(target.x + 0.5, target.y + 0.5)) return [start];
+
+  const cost = Array.from({ length: ROWS }, () => Array(COLS).fill(Infinity));
+  const cameFrom = Array.from({ length: ROWS }, () => Array(COLS).fill(null));
+  const open = [start];
+  cost[start.y][start.x] = 0;
+  cameFrom[start.y][start.x] = start;
+
+  while (open.length) {
+    let bestIndex = 0;
+    let bestScore = Infinity;
+    for (let i = 0; i < open.length; i++) {
+      const cell = open[i];
+      const score = cost[cell.y][cell.x] + distance(cell, target) * 0.08;
+      if (score < bestScore) {
+        bestScore = score;
+        bestIndex = i;
+      }
+    }
+
+    const cell = open.splice(bestIndex, 1)[0];
+    if (cell.x === target.x && cell.y === target.y) break;
+
+    for (const next of neighbors(cell)) {
+      const nextCost = cost[cell.y][cell.x] + 1 + aiDangerCost(next, target, config);
+      if (nextCost < cost[next.y][next.x]) {
+        cost[next.y][next.x] = nextCost;
+        cameFrom[next.y][next.x] = cell;
+        if (!open.some((openCell) => openCell.x === next.x && openCell.y === next.y)) {
+          open.push(next);
+        }
+      }
+    }
+  }
+
+  if (!cameFrom[target.y][target.x]) return pathTo(start, target);
+  const path = [target];
+  let current = target;
+  while (current.x !== start.x || current.y !== start.y) {
+    current = cameFrom[current.y][current.x];
+    path.push(current);
+  }
+  return path.reverse();
+}
+
+function aiDangerCost(cell, target, config) {
+  let total = 0;
+  const x = cell.x + 0.5;
+  const y = cell.y + 0.5;
+
   for (const hole of holes) {
+    if (hole.removed) continue;
+    const dist = Math.hypot(x - hole.x, y - hole.y);
+    const avoidRadius = config.avoidRadius * (hole.size === "small" ? 0.75 : 1);
+    if (dist >= avoidRadius) continue;
+
+    const frozenScale = hole.frozen > 0 ? 0.25 : 1;
+    const centerPenalty = dist < hole.radius + 0.45 && !sameCell(cell, target) ? 80 : 0;
+    const pressure = (avoidRadius - dist) / avoidRadius;
+    total += centerPenalty + pressure * pressure * config.avoidWeight * frozenScale;
+  }
+
+  return total;
+}
+
+function cutHole(hole, player, newHoles) {
+  hole.removed = true;
+  if (hole.size === "small") return;
+
+  const angle = Math.atan2(hole.y - player.y, hole.x - player.x) + Math.PI / 2;
+  const spread = 0.38;
+  newHoles.push(makeSmallHole(hole, Math.cos(angle) * spread, Math.sin(angle) * spread));
+  newHoles.push(makeSmallHole(hole, -Math.cos(angle) * spread, -Math.sin(angle) * spread));
+}
+
+function makeSmallHole(source, dx, dy) {
+  const x = isFloor(source.x + dx, source.y + dy) ? source.x + dx : source.x;
+  const y = isFloor(source.x + dx, source.y + dy) ? source.y + dy : source.y;
+  return {
+    x,
+    y,
+    radius: SMALL_HOLE_RADIUS,
+    size: "small",
+    speed: source.speed * 1.12,
+    recalc: 0,
+    path: [],
+    stunned: 0.25,
+    frozen: 0,
+    cutCooldown: CUT_COOLDOWN_SECONDS,
+  };
+}
+
+function pushHoleAway(hole, player, amount = 0.9) {
+  const dx = hole.x - player.x || 0.01;
+  const dy = hole.y - player.y || 0.01;
+  const len = Math.hypot(dx, dy);
+  const pushedX = hole.x + (dx / len) * amount;
+  const pushedY = hole.y + (dy / len) * amount;
+  if (isFloor(pushedX, pushedY)) {
+    hole.x = pushedX;
+    hole.y = pushedY;
+  }
+  hole.stunned = Math.max(hole.stunned, 0.5);
+  hole.recalc = 0;
+  hole.path = [];
+}
+
+function checkEndings() {
+  const newHoles = [];
+  for (const hole of holes) {
+    if (hole.removed) continue;
     for (const player of activePlayers()) {
+      if (hole.removed) break;
       const hit = Math.hypot(player.x - hole.x, player.y - hole.y) < hole.radius + player.radius * 0.95;
       if (!hit) continue;
-      if (player.spinach > 0) {
-        const dx = hole.x - player.x || 0.01;
-        const dy = hole.y - player.y || 0.01;
-        const len = Math.hypot(dx, dy);
-        const pushedX = hole.x + (dx / len) * 0.9;
-        const pushedY = hole.y + (dy / len) * 0.9;
-        if (isFloor(pushedX, pushedY)) {
-          hole.x = pushedX;
-          hole.y = pushedY;
+
+      if (player.sword > 0) {
+        if ((hole.cutCooldown || 0) > 0) {
+          pushHoleAway(hole, player, 0.55);
+        } else {
+          cutHole(hole, player, newHoles);
         }
-        hole.stunned = 1.15;
-        hole.recalc = 0;
-        hole.path = [];
+      } else if (player.spinach > 0) {
+        pushHoleAway(hole, player, 0.9);
+        hole.stunned = Math.max(hole.stunned, 1.15);
       } else {
         player.state = "dead";
         player.spinach = 0;
         player.carrot = 0;
         player.poop = 0;
         player.drunk = 0;
+        player.sword = 0;
       }
     }
   }
+  holes = holes.filter((hole) => !hole.removed).concat(newHoles);
 
   for (const player of activePlayers()) {
     if (Math.hypot(player.x - (exitCell.x + 0.5), player.y - (exitCell.y + 0.5)) < 0.62) {
+      if (player.isAi && deadPlayers().length > 0) {
+        player.aiTarget = entityCell(nearestDeadPlayer(player));
+        player.aiWaypoint = null;
+        player.aiThink = 0;
+        continue;
+      }
       player.state = "escaped";
       player.x = exitCell.x + 0.5;
       player.y = exitCell.y + 0.5;
@@ -789,21 +905,22 @@ function checkEndings() {
       player.carrot = 0;
       player.poop = 0;
       player.drunk = 0;
+      player.sword = 0;
     }
   }
 
   const activeCount = activePlayers().length;
   const escapedCount = players.filter((player) => player.state === "escaped").length;
-  if (activeCount === 0 && escapedCount > 0) {
+  if (escapedCount === players.length) {
     state = "won";
-    statusText.textContent = escapedCount === players.length ? "全部逃出去了" : "倖存者逃出去了";
-    overlayTitle.textContent = escapedCount === players.length ? "全部逃出去了" : "倖存者逃出去了";
+    statusText.textContent = "全部逃出去了";
+    overlayTitle.textContent = "全部逃出去了";
     startBtn.textContent = "再玩一次";
     overlay.classList.remove("hidden");
   } else if (activeCount === 0) {
     state = "dead";
-    statusText.textContent = "全員掉下去了";
-    overlayTitle.textContent = "全員掉下去了";
+    statusText.textContent = "有人沒逃出來";
+    overlayTitle.textContent = "有人沒逃出來";
     startBtn.textContent = "再逃一次";
     overlay.classList.remove("hidden");
   }
@@ -826,6 +943,7 @@ function playerStatus(player) {
   if (state === "ready") return "準備";
   if (player.state === "escaped") return "逃出";
   if (player.state === "dead") return "陣亡";
+  if (player.sword > 0) return "持劍中";
   if (player.drunk > 0) return "反向中";
   if (player.spinach > 0) return "長大中";
   if (player.carrot > 0) return "加速中";
@@ -838,12 +956,18 @@ function playerEffects(player) {
   if (player.state === "escaped") return "已到出口";
   if (player.state === "dead") return "碰到即可復活";
 
-  const effects = [];
-  if (player.spinach > 0) effects.push(`菠菜 ${player.spinach.toFixed(1)}`);
-  if (player.carrot > 0) effects.push(`蘿蔔 ${player.carrot.toFixed(1)}`);
-  if (player.poop > 0) effects.push(`大便 ${player.poop.toFixed(1)}`);
-  if (player.drunk > 0) effects.push(`酒杯 ${player.drunk.toFixed(1)}`);
+  const effects = playerEffectEntries(player).map((effect) => effect.hud);
   return effects.length ? effects.join(" / ") : "無效果";
+}
+
+function playerEffectEntries(player) {
+  const effects = [];
+  if (player.spinach > 0) effects.push({ hud: `菠菜 ${player.spinach.toFixed(1)}`, head: `菠${player.spinach.toFixed(1)}` });
+  if (player.carrot > 0) effects.push({ hud: `蘿蔔 ${player.carrot.toFixed(1)}`, head: `蘿${player.carrot.toFixed(1)}` });
+  if (player.poop > 0) effects.push({ hud: `大便 ${player.poop.toFixed(1)}`, head: `便${player.poop.toFixed(1)}` });
+  if (player.drunk > 0) effects.push({ hud: `酒杯 ${player.drunk.toFixed(1)}`, head: `酒${player.drunk.toFixed(1)}` });
+  if (player.sword > 0) effects.push({ hud: `寶劍 ${player.sword.toFixed(1)}`, head: `劍${player.sword.toFixed(1)}` });
+  return effects;
 }
 
 function draw() {
@@ -942,6 +1066,21 @@ function drawPlayer(player) {
     ctx.stroke();
   }
 
+  if (player.sword > 0 && player.state === "active") {
+    ctx.strokeStyle = "#f8fafc";
+    ctx.lineWidth = Math.max(2, r * 0.16);
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.25, y - r * 0.28);
+    ctx.lineTo(x + r * 1.05, y - r * 1.08);
+    ctx.stroke();
+    ctx.strokeStyle = "#d6a03d";
+    ctx.lineWidth = Math.max(2, r * 0.12);
+    ctx.beginPath();
+    ctx.moveTo(x + r * 0.08, y - r * 0.08);
+    ctx.lineTo(x + r * 0.42, y - r * 0.42);
+    ctx.stroke();
+  }
+
   ctx.fillStyle = "#1a1a1a";
   ctx.beginPath();
   ctx.arc(x - r * 0.32, y - r * 0.18, r * 0.12, 0, Math.PI * 2);
@@ -994,6 +1133,46 @@ function drawPlayer(player) {
   ctx.textBaseline = "middle";
   ctx.strokeText(player.label, x, y - r * 1.55);
   ctx.fillText(player.label, x, y - r * 1.55);
+  drawPlayerEffectTimers(player, x, y, r);
+}
+
+function drawPlayerEffectTimers(player, x, y, radius) {
+  if (player.state !== "active") return;
+
+  const effects = playerEffectEntries(player);
+  if (!effects.length) return;
+
+  const rows = [];
+  for (let i = 0; i < effects.length; i += 3) {
+    rows.push(effects.slice(i, i + 3).map((effect) => effect.head).join(" "));
+  }
+
+  const fontSize = Math.max(9, cellSize * 0.28);
+  const lineHeight = fontSize + 5;
+  const bottomY = y - radius * 2.25;
+  const startY = Math.max(offsetY + lineHeight, bottomY - (rows.length - 1) * lineHeight);
+
+  ctx.save();
+  ctx.font = `700 ${fontSize}px "Microsoft JhengHei", sans-serif`;
+  ctx.textAlign = "center";
+  ctx.textBaseline = "middle";
+
+  rows.forEach((row, index) => {
+    const rowY = startY + index * lineHeight;
+    const width = ctx.measureText(row).width + 10;
+    const height = fontSize + 5;
+    ctx.fillStyle = "rgba(17, 20, 24, 0.78)";
+    ctx.beginPath();
+    roundedRectPath(ctx, x - width / 2, rowY - height / 2, width, height, 4);
+    ctx.fill();
+    ctx.strokeStyle = "rgba(244, 241, 231, 0.72)";
+    ctx.lineWidth = 1;
+    ctx.stroke();
+    ctx.fillStyle = "#f4f1e7";
+    ctx.fillText(row, x, rowY);
+  });
+
+  ctx.restore();
 }
 
 function drawHole(hole) {
@@ -1022,6 +1201,23 @@ function drawHole(hole) {
   ctx.beginPath();
   ctx.arc(x, y, r, pulse * 4, pulse * 4 + Math.PI * 1.55);
   ctx.stroke();
+
+  if (hole.size === "small") {
+    ctx.strokeStyle = "#f4f1e7";
+    ctx.lineWidth = Math.max(1, cellSize * 0.045);
+    ctx.beginPath();
+    ctx.moveTo(x - r * 0.55, y - r * 0.45);
+    ctx.lineTo(x + r * 0.55, y + r * 0.45);
+    ctx.stroke();
+
+    if ((hole.cutCooldown || 0) > 0) {
+      ctx.strokeStyle = "#d6a03d";
+      ctx.lineWidth = Math.max(2, cellSize * 0.055);
+      ctx.beginPath();
+      ctx.arc(x, y, r * 1.45, -Math.PI / 2, -Math.PI / 2 + Math.PI * 2 * (hole.cutCooldown / CUT_COOLDOWN_SECONDS));
+      ctx.stroke();
+    }
+  }
 }
 
 function drawItem(item) {
@@ -1113,6 +1309,30 @@ function drawItem(item) {
     ctx.lineTo(x + s * 0.22, y + s * 0.02);
     ctx.stroke();
   }
+
+  if (item.type === "sword") {
+    ctx.strokeStyle = "#f8fafc";
+    ctx.lineWidth = Math.max(2, s * 0.08);
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.28, y + s * 0.28);
+    ctx.lineTo(x + s * 0.28, y - s * 0.28);
+    ctx.stroke();
+    ctx.fillStyle = "#f8fafc";
+    ctx.beginPath();
+    ctx.moveTo(x + s * 0.34, y - s * 0.34);
+    ctx.lineTo(x + s * 0.22, y - s * 0.08);
+    ctx.lineTo(x + s * 0.08, y - s * 0.22);
+    ctx.closePath();
+    ctx.fill();
+    ctx.strokeStyle = "#d6a03d";
+    ctx.lineWidth = Math.max(2, s * 0.07);
+    ctx.beginPath();
+    ctx.moveTo(x - s * 0.38, y + s * 0.14);
+    ctx.lineTo(x - s * 0.14, y + s * 0.38);
+    ctx.moveTo(x - s * 0.28, y + s * 0.04);
+    ctx.lineTo(x - s * 0.04, y + s * 0.28);
+    ctx.stroke();
+  }
 }
 
 function roundedRectPath(context, x, y, width, height, radius) {
@@ -1171,7 +1391,7 @@ for (const button of document.querySelectorAll(".touch-btn")) {
   button.addEventListener("pointercancel", release);
 }
 
-for (const select of [playerCountSelect, aiDifficultySelect, ...playerModeSelects]) {
+for (const select of [playerCountSelect, aiCountSelect, aiDifficultySelect]) {
   select.addEventListener("change", () => {
     syncSetupVisibility();
     saveSettings();
